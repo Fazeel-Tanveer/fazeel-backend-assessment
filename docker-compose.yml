@@ -1,0 +1,108 @@
+x-database-url: &database-url postgresql://${POSTGRES_USER:-postgres}:${POSTGRES_PASSWORD:-postgres}@postgres:5432/${POSTGRES_DB:-food_ordering}
+
+x-app-env: &app-env
+  NODE_ENV: production
+  DATABASE_URL: *database-url
+  REDIS_URL: redis://redis:6379
+  RABBITMQ_URL: amqp://${RABBITMQ_USER:-food}:${RABBITMQ_PASSWORD:-food}@rabbitmq:5672
+
+x-app: &app
+  build:
+    context: .
+    target: runtime
+  env_file: .env
+  init: true
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: ["no-new-privileges:true"]
+  restart: unless-stopped
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+    redis:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-postgres}
+      POSTGRES_DB: ${POSTGRES_DB:-food_ordering}
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:6380:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:-food}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:-food}
+    ports:
+      - "127.0.0.1:5672:5672"
+      - "127.0.0.1:15672:15672"
+    healthcheck:
+      # ping passes before the AMQP listener is up; this waits until port 5672 accepts connections
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  migrate:
+    build:
+      context: .
+      target: migrate
+    env_file: .env
+    environment:
+      DATABASE_URL: *database-url
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    <<: *app
+    # a range so `--scale api=3` gives each replica its own host port; a single replica gets 3000
+    ports:
+      - "127.0.0.1:3000-3002:3000"
+    environment:
+      <<: *app-env
+      PORT: 3000
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://localhost:3000/api/v1/health').then((res) => process.exit(res.ok ? 0 : 1), () => process.exit(1))"
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  worker:
+    <<: *app
+    command: ["node", "dist/worker.js"]
+    environment:
+      <<: *app-env
+      # local demo only: no email/SMS provider is connected, so this logs login codes; turn it off for a real deployment
+      LOG_NOTIFICATION_CONTENT: ${LOG_NOTIFICATION_CONTENT:-true}
+
+volumes:
+  pgdata:

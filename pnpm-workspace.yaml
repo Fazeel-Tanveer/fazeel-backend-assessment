@@ -1,0 +1,19 @@
+allowBuilds:
+  '@prisma/engines': true
+  '@scarf/scarf': false
+  '@swc/core': true
+  bcrypt: true
+  esbuild: true
+  prisma: true
+# the Prisma CLI pins mysql2 and deepmerge-ts versions that have published security advisories
+overrides:
+  'prisma>mysql2': ^3.23.1
+  '@prisma/config>deepmerge-ts': ^8.0.2
+minimumReleaseAgeExclude:
+  - eslint-plugin-sonarjs@4.2.2
+  - '@nestjs/microservices@12.1.1'
+  - amqplib@2.2.0
+peerDependencyRules:
+  allowedVersions:
+    '@nest-lab/throttler-storage-redis>@nestjs/common': '12'
+    '@nest-lab/throttler-storage-redis>@nestjs/core': '12'
